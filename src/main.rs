@@ -1,6 +1,5 @@
 mod bit_vec;
 mod board;
-mod cell;
 mod opt;
 
 use rayon::prelude::*;
