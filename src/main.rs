@@ -1,5 +1,6 @@
-mod bit_vec;
+mod bitset;
 mod board;
+mod heuristic;
 mod opt;
 
 use rayon::prelude::*;
@@ -9,8 +10,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
 
-use crate::bit_vec::BitSet;
+use crate::bitset::BitSet;
 use board::Sudoku;
+use heuristic::Heuristic;
 use opt::Opt;
 
 fn main() {
@@ -33,7 +35,7 @@ fn main() {
             let flat_line = line.split(';').nth(2).unwrap();
 
             let mut board = Sudoku::from_flattened(flat_line);
-            board.print_board();
+            board.print_board(100);
             board.apply_domain(domain);
         }
         Opt::Solve { nth } => {
@@ -107,9 +109,10 @@ fn main() {
                             let line = line.split(';').nth(2).unwrap();
                             let mut board = Sudoku::from_flattened(line);
                             board.apply_domain(domain);
+                            let heuristic = Heuristic::Greedy;
 
                             let now = Instant::now();
-                            let (result, backtrack_counter) = board.solve_fc();
+                            let (result, backtrack_counter) = board.solve_fc(&heuristic);
                             let now = now.elapsed().as_secs_f64();
                             let board = format!("{}", board);
 
@@ -135,9 +138,12 @@ fn run_solve(line: String, domain: BitSet) -> (f64, char, u64, String) {
     let line = line.split(';').nth(2).unwrap();
     let mut board = Sudoku::from_flattened(line);
     board.apply_domain(domain);
+    dbg!(&board.domains);
+    let v_heuristic = Heuristic::Random;
+    let s_heuristic = Heuristic::LeastConstrainedVariable;
 
     let now = Instant::now();
-    let (result, backtrack_counter) = board.solve();
+    let (result, backtrack_counter) = board.solve(&v_heuristic, &s_heuristic);
     let now = now.elapsed().as_secs_f64();
     let board = format!("{}", board);
 
@@ -148,9 +154,10 @@ fn run_solve_fc(line: String, domain: BitSet) -> (f64, char, u64, String) {
     let line = line.split(';').nth(2).unwrap();
     let mut board = Sudoku::from_flattened(line);
     board.apply_domain(domain);
+    let heuristic = Heuristic::Greedy;
 
     let now = Instant::now();
-    let (result, backtrack_counter) = board.solve_fc();
+    let (result, backtrack_counter) = board.solve_fc(&heuristic);
     let now = now.elapsed().as_secs_f64();
     let board = format!("{}", board);
 

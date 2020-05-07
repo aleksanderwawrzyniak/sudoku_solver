@@ -1,13 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
 
-pub enum Heuristic {
-    Greedy,
-    Random,
-    MostConstrainingVariable,
-    MostConstrainedVariable,
-    LeastConstrainingVariable,
-}
+use crate::heuristic::{Heuristic, HeuristicDomainOperations};
+use rand::prelude::*;
 
 pub trait DomainOperations {
     type Item;
@@ -50,6 +45,11 @@ pub struct BitIter {
     current: BitSet,
 }
 
+pub struct HeuristicBitIter {
+    current: BitSet,
+    heuristic: Heuristic,
+}
+
 impl BitSet {
     pub fn new() -> Self {
         Self { set: 0 }
@@ -68,15 +68,36 @@ impl BitSet {
     }
 
     pub fn current(self) -> u32 {
-        self.set.trailing_zeros() as u32
+        (self.set.trailing_zeros() & !64 as u32) as u32
     }
 
     pub fn iter(self) -> BitIter {
         BitIter { current: self }
     }
 
+    pub fn iter_h(self, heuristic: &Heuristic) -> HeuristicBitIter {
+        HeuristicBitIter {
+            current: self,
+            heuristic: heuristic.clone(),
+        }
+    }
+
     pub fn is_empty(self) -> bool {
         self.len() == 0
+    }
+
+    pub fn random(self) -> u32 {
+        let mut rng = thread_rng();
+        let len = self.len();
+        if len == 0 {
+            return 0;
+        }
+        let pos = rng.gen_range(0, len);
+        self.iter().nth(pos).unwrap_or(0)
+    }
+
+    pub fn last(self) -> u32 {
+        self.iter().last().unwrap_or(0)
     }
 }
 
@@ -88,7 +109,22 @@ impl Iterator for BitIter {
             return None;
         }
 
-        let next = self.current.next();
+        let next = DomainOperations::next(&self.current);
+        self.current.remove(next);
+
+        Some(next)
+    }
+}
+
+impl Iterator for HeuristicBitIter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current.is_empty() {
+            return None;
+        }
+
+        let next = HeuristicDomainOperations::next(&self.current, &self.heuristic);
         self.current.remove(next);
 
         Some(next)

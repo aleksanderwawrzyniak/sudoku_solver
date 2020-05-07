@@ -1,6 +1,11 @@
-use super::bit_vec::BitSet;
+mod empty_slots;
 
-use crate::bit_vec::DomainOperations;
+use super::bitset::BitSet;
+
+use colored::*;
+
+use crate::heuristic::{Heuristic, HeuristicDomainOperations};
+use empty_slots::EmptySlots;
 use std::fmt;
 use std::iter::FromIterator;
 
@@ -32,20 +37,23 @@ impl Sudoku {
 
         Self::from_iter(v)
     }
-    pub fn print_board(&self) {
-        let s: String = self
-            .board_rows
-            .iter()
-            .map(|row| {
-                let mut line = String::new();
-                row.iter()
-                    .for_each(|idx| line.push_str(&format!(" {}", self.board[*idx])));
-                line.push('\n');
+    pub fn print_board(&self, current: usize) {
+        let (row_id, col_id) = self.board_coords[current];
 
-                line
-            })
-            .collect();
-        println!("{}", s);
+        self.board_rows.iter().for_each(|row| {
+            row.iter().for_each(|&idx| {
+                if idx == current {
+                    print!(" {}", format!("{}", self.board[idx]).red());
+                } else if self.board_rows[row_id].contains(&idx)
+                    || self.board_cols[col_id].contains(&idx)
+                {
+                    print!(" {}", format!("{}", self.board[idx]).blue());
+                } else {
+                    print!(" {}", self.board[idx]);
+                }
+            });
+            println!();
+        });
     }
 
     // given coordinates, returns actual index in the array
@@ -67,15 +75,20 @@ impl Sudoku {
         r * 3 + c
     }
 
-    pub fn get_number(&self, row: usize, col: usize) -> u32 {
-        let index = Self::index(row, col);
-        self.board[index]
-    }
-
     pub fn set_number(&mut self, row: usize, col: usize, value: u32) -> bool {
         let index = Self::index(row, col);
         self.board[index] = value;
         true
+    }
+
+    pub fn get_domain(&self, row: usize, col: usize) -> BitSet {
+        let index = Self::index(row, col);
+        self.domains[index]
+    }
+
+    pub fn set_domain(&mut self, row: usize, col: usize, domain: BitSet) {
+        let index = Self::index(row, col);
+        self.domains[index] = domain;
     }
 
     pub fn is_valid(&self, row: usize, col: usize, value: u32) -> bool {
@@ -113,61 +126,56 @@ impl Sudoku {
         true
     }
 
-    pub fn find_solution(&self, row: usize, col: usize) -> Option<u32> {
-        let current_number = self.get_number(row, col);
-        // all possibilities failed
-        if current_number == 9 {
-            return None;
-        }
-        let start = current_number + 1;
-        for i in start..10 {
-            if self.is_valid(row, col, i) {
-                return Some(i);
+    pub fn find_solution(&mut self, row: usize, col: usize, heuristic: &Heuristic) -> Option<u32> {
+        let mut current_domain = self.get_domain(row, col);
+        let mut value = HeuristicDomainOperations::next(&current_domain, heuristic);
+
+        while value != 0 {
+            current_domain.remove(value);
+            if self.is_valid(row, col, value) {
+                self.set_domain(row, col, current_domain);
+                return Some(value);
             }
+            value = HeuristicDomainOperations::next(&current_domain, heuristic);
         }
         None
     }
 
-    pub fn solve(&mut self) -> (char, u64) {
-        let mut i = 0;
+    pub fn solve(
+        &mut self,
+        value_heuristic: &Heuristic,
+        slot_heuristic: &Heuristic,
+    ) -> (char, u64) {
+        let domain_holder = self.domains.clone();
         let mut backtrack_counter = 0u64;
-        while i < self.empty_slots.len() {
-            // println!("================================");
-            // self.print_board();
-            let (row, col) = self.board_coords[self.empty_slots[i]];
-            match self.find_solution(row, col) {
+        let mut slots = EmptySlots::from(self.empty_slots.iter());
+        slots.set_heuristic(slot_heuristic);
+
+        while let Some(slot) = slots.next(&self.domains) {
+            // println!("============================================");
+            // self.print_board(slot);
+
+            let (row, col) = self.board_coords[slot];
+            match self.find_solution(row, col, value_heuristic) {
+                // match self.find_solution(row, col) {
                 Some(solution) => {
+                    // dbg!(solution);
                     self.set_number(row, col, solution);
-                    i += 1;
                 }
                 None => {
-                    // no solution found, reset cell
+                    // no solution found, reset cell and go back to previous one
                     self.set_number(row, col, 0);
+                    self.set_domain(row, col, domain_holder[slot]);
                     backtrack_counter += 1;
-                    match i.checked_sub(1) {
-                        Some(j) => i = j,
-                        // TODO: Do not panic here, as it will kill the whole program later
-                        None => {
-                            println!("No Solution");
-                            return (UNSOLVED_CHARACTER, backtrack_counter);
-                        }
+                    dbg!(backtrack_counter);
+                    if slots.backtrack().is_none() {
+                        println!("No Solution");
+                        return (UNSOLVED_CHARACTER, backtrack_counter);
                     }
                 }
             }
         }
 
-        // if self.solved() {
-        //     println!("SOLVED");
-        //     println!("{}", backtrack_counter);
-        //     self.print_board();
-        //     println!("\n{}", self);
-        // } else {
-        //     println!("NOT SOLVED");
-        //     println!("{}", backtrack_counter);
-        //     self.print_board();
-        //     println!("\n{}", self);
-        // }
-        //
         (SOLVED_CHARACTER, backtrack_counter)
     }
 
@@ -187,7 +195,7 @@ impl Sudoku {
         Ok(version.2)
     }
 
-    pub fn solve_fc(&mut self) -> (char, u64) {
+    pub fn solve_fc(&mut self, heuristic: &Heuristic) -> (char, u64) {
         let mut i: usize = 0;
         let mut backtrack_counter = 0u64;
         let mut versions: Vec<(Vec<u32>, Vec<Domain>, usize)> = Vec::new();
@@ -201,11 +209,11 @@ impl Sudoku {
                 continue;
             }
 
-            // take the next value in the
-            match self.domains[self.empty_slots[i]].iter().next() {
+            // take the next value in the empty slots.
+            match self.domains[self.empty_slots[i]].iter_h(heuristic).next() {
                 Some(solution) => {
                     self.set_number(row, col, solution);
-                    if self.try_update_domains().is_err() {
+                    if self.try_update_domains(heuristic).is_err() {
                         backtrack_counter += 1;
                         let previous_version = versions.pop().unwrap();
                         match self.backtrack(previous_version, solution) {
@@ -273,7 +281,7 @@ impl Sudoku {
         (SOLVED_CHARACTER, backtrack_counter)
     }
 
-    fn try_update_domains(&mut self) -> Result<(), ()> {
+    fn try_update_domains(&mut self, heuristic: &Heuristic) -> Result<(), ()> {
         (0..self.board.len())
             .map(|idx| self.try_update_domain(idx))
             .collect::<Result<(), ()>>()?;
@@ -281,7 +289,7 @@ impl Sudoku {
         // if there was some value changed, try to update domains once more, if not,
         // there's no need to check it
         if (0..self.board.len())
-            .filter_map(|idx| self.try_update_value(idx))
+            .filter_map(|idx| self.try_update_value(idx, heuristic))
             .next()
             .is_some()
         {
@@ -326,26 +334,14 @@ impl Sudoku {
         }
     }
 
-    fn try_update_value(&mut self, idx: usize) -> Option<()> {
-        let value = self.domains[idx].next();
+    fn try_update_value(&mut self, idx: usize, heuristic: &Heuristic) -> Option<()> {
+        let value = HeuristicDomainOperations::next(&self.domains[idx], heuristic);
         if self.domains[idx].len() == 1 && value != self.board[idx] {
             self.board[idx] = value;
             Some(())
         } else {
             None
         }
-    }
-
-    pub fn solved(&self) -> bool {
-        for x in 0..self.board_rows.len() {
-            for y in 0..self.board_cols.len() {
-                if !self.is_valid(x, y, self.get_number(x, y)) {
-                    return false;
-                }
-            }
-        }
-
-        true
     }
 
     pub fn apply_domain(&mut self, domain: Domain) -> &mut Self {
@@ -357,10 +353,9 @@ impl Sudoku {
             .enumerate()
             .map(|(idx, &value)| {
                 if value != 0 {
-                    let mut domain = Domain::new();
-                    domain.insert(value);
-
-                    domain
+                    let mut d = Domain::new();
+                    d.insert(value);
+                    d
                 } else {
                     self.find_domain(idx)
                 }
